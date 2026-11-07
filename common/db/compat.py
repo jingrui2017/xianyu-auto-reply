@@ -13,10 +13,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from loguru import logger
 
 from sqlalchemy import select, update, delete, and_, text, func
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from common.db.session import async_session_maker
 from common.core.config import get_settings
+from common.db.tls import create_async_mysql_engine
 from common.models.xy_account import XYAccount
 from common.models.risk_control_log import XYRiskControlLog
 from common.models.account_login_log import XYAccountLoginLog
@@ -39,15 +40,14 @@ def _get_thread_local_session_maker():
     """获取当前线程的数据库会话工厂（懒加载）"""
     if not hasattr(_thread_local, 'session_maker'):
         settings = get_settings()
-        engine = create_async_engine(
-            settings.async_database_url,
+        engine = create_async_mysql_engine(
+            settings,
             echo=False,
             pool_pre_ping=settings.db_pool_pre_ping,  # 取连接前 ping，剔除失效连接（asyncmy ping 已在 session 层做兼容修补）
             pool_size=1,   # 兼容层线程为一次性，单协程只需 1 条连接（原 3，避免连接累积）
             max_overflow=2,  # 仅留少量溢出余量（原 5），降低单引擎最大连接数 8 -> 3
             pool_timeout=settings.db_pool_timeout,  # 获取连接超时时间
             pool_recycle=settings.db_pool_recycle,  # 连接回收时间，防止MySQL断开陈旧连接
-            connect_args={"connect_timeout": settings.db_connect_timeout},  # TCP 建连超时，远程库不可达时快速失败
         )
         _thread_local.engine = engine
         _thread_local.session_maker = async_sessionmaker(engine, expire_on_commit=False)

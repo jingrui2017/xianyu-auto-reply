@@ -321,9 +321,8 @@ def _save_login_result(
     from datetime import datetime, timedelta, timezone
     
     from sqlalchemy import select
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    
-    from common.core.config import BaseConfig
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
     from common.models.xy_account import XYAccount
     from common.services.account_limit_service import AccountLimitExceededError, AccountLimitService
     from common.utils.cookie_refresh import clear_cookie_refresh_snapshot
@@ -417,16 +416,18 @@ def _save_login_result(
             async def save_to_db():
                 # 一次性事件循环内的临时引擎：仅需极小连接池，并加连接超时；
                 # 用 try/finally 确保引擎及其连接池始终被释放，避免每次密码登录泄漏连接。
+                from common.core.config import BaseConfig
+                from common.db.tls import create_async_mysql_engine
+
                 config = BaseConfig()
-                engine = create_async_engine(
-                    config.async_database_url,
+                engine = create_async_mysql_engine(
+                    config,
                     echo=False,
                     pool_pre_ping=config.db_pool_pre_ping,
                     pool_size=1,
                     max_overflow=2,
                     pool_timeout=config.db_pool_timeout,
                     pool_recycle=config.db_pool_recycle,
-                    connect_args={"connect_timeout": config.db_connect_timeout},
                 )
                 session_maker = async_sessionmaker(engine, expire_on_commit=False)
                 try:

@@ -5,7 +5,7 @@
 
 功能：
 1. 创建所有数据表（如果不存在）
-2. 创建默认管理员用户 (admin/admin123)
+2. 创建默认管理员用户（口令来自一次性环境变量或本地文件，不写入代码）
 3. 初始化系统设置
 
 使用方法：
@@ -3872,7 +3872,11 @@ class DatabaseInitializer:
 
 
     async def create_default_admin(self):
-        """创建默认管理员用户 (admin/admin123)"""
+        """创建默认管理员。口令只来自一次性配置或本地文件。"""
+        from common.core.config import get_settings
+        from common.db.initial_admin import resolve_initial_admin_password
+        from common.db.tls import redact_secrets
+
         logger.info("检查默认管理员用户...")
         
         try:
@@ -3887,8 +3891,10 @@ class DatabaseInitializer:
                     logger.info("✓ 管理员用户已存在，跳过创建")
                     return
                 
-                # 使用 passlib 创建密码哈希
-                password_hash = get_password_hash("admin123")
+                settings = get_settings()
+                initial_password, password_file = resolve_initial_admin_password(settings)
+                password_hash = get_password_hash(initial_password)
+                del initial_password
                 
                 # 插入管理员用户
                 await session.execute(
@@ -3898,16 +3904,40 @@ class DatabaseInitializer:
                     """),
                     {"password_hash": password_hash}
                 )
+                await session.execute(
+                    text("""
+                        INSERT INTO xy_system_settings (`key`, value, description, updated_at)
+                        VALUES (
+                            'security.admin_password_change_required',
+                            'true',
+                            '初始管理员口令必须在本地修改',
+                            NOW()
+                        )
+                        ON DUPLICATE KEY UPDATE value = 'true', updated_at = NOW()
+                    """)
+                )
                 await session.commit()
                 
                 logger.info("✓ 默认管理员用户创建成功")
                 logger.info("  用户名: admin")
-                logger.info("  密码: admin123")
+                if password_file:
+                    logger.info(f"  初始口令文件: {password_file}")
+                else:
+                    logger.info("  初始口令来自环境变量，请登录后立即修改")
                 
         except IntegrityError:
             logger.info("✓ 管理员用户已存在，跳过创建")
         except Exception as e:
-            logger.error(f"✗ 创建管理员用户失败: {e}")
+            secrets = []
+            try:
+                secrets.append(get_settings().mysql_password)
+            except Exception:
+                pass
+            try:
+                secrets.append(initial_password)
+            except NameError:
+                pass
+            logger.error("✗ 创建管理员用户失败: " + redact_secrets(str(e), *secrets))
     
     async def init_system_settings(self):
         """初始化系统设置"""

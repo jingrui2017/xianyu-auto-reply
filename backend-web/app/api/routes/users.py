@@ -3,7 +3,7 @@ import string
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
@@ -69,8 +69,9 @@ async def change_password(
     payload: ChangePasswordRequest,
     current_user: User = Depends(deps.get_current_active_user),
     user_service: UserService = Depends(deps.get_user_service),
+    session: AsyncSession = Depends(deps.get_db_session),
 ) -> ApiResponse:
-    """修改当前用户密码"""
+    """修改当前用户密码，并清除初始口令必须修改的标记。"""
     # 验证当前密码
     if not verify_password(payload.current_password, current_user.password_hash):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前密码不正确")
@@ -81,6 +82,13 @@ async def change_password(
     
     # 更新密码
     current_user.password_hash = get_password_hash(payload.new_password)
+    await session.execute(
+        text("""
+            UPDATE xy_system_settings
+            SET value = 'false', updated_at = NOW()
+            WHERE `key` = 'security.admin_password_change_required'
+        """)
+    )
     await user_service.update(current_user, UserUpdate())
     
     return ApiResponse(success=True, message="密码修改成功")

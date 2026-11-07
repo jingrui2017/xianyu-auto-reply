@@ -12,7 +12,7 @@ from __future__ import annotations
 from functools import lru_cache
 from urllib.parse import quote_plus
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -42,15 +42,19 @@ class BaseConfig(BaseSettings):
     mysql_host: str = Field(default="localhost")
     mysql_port: int = Field(default=3306)
     mysql_user: str = Field(default="root")
-    mysql_password: str = Field(default="root")
+    mysql_password: str = Field(default="root", repr=False)
     mysql_database: str = Field(default="xianyu_data")
     sync_driver: str = Field(default="mysql+pymysql")
     async_driver: str = Field(default="mysql+asyncmy")
+    # disable：现有明文部署。verify_identity：只信任 MYSQL_SSL_CA，并校验主机名。
+    mysql_ssl_mode: str = Field(default="disable")
+    mysql_ssl_ca: str = Field(default="")
+    mysql_ssl_server_hostname: str = Field(default="")
 
     # 数据库连接池配置（账号数量较大时可通过环境变量调优）
     # MySQL max_connections 必须大于所有服务进程的连接峰值总和并预留管理连接。
     # 主服务默认峰值合计 2640；启用推广服务后为 3460，部署默认上限为 4000。
-    db_pool_size: int = Field(default=800, ge=600)   # 连接池容量，连接按需建立
+    db_pool_size: int = Field(default=800, ge=1)   # 连接池容量，连接按需建立
     db_max_overflow: int = Field(default=70)         # 允许的溢出连接数（峰值 = pool_size + max_overflow）
     db_pool_timeout: int = Field(default=30)         # 从连接池获取连接的最长等待秒数
     db_pool_recycle: int = Field(default=1800)       # 连接回收时间（秒），防止 MySQL 主动断开陈旧连接
@@ -63,7 +67,13 @@ class BaseConfig(BaseSettings):
     redis_port: int = Field(default=6379)
     redis_password: str = Field(default="", repr=False)
     redis_db: int = Field(default=0)
-    redis_pool_size: int = Field(default=800, alias="REDIS_POOL_SIZE", ge=600)
+    # false：现有明文部署。true 时只信任 REDIS_SSL_CA，并校验主机名。
+    redis_ssl: bool = Field(default=False)
+    redis_ssl_ca: str = Field(default="")
+    redis_ssl_server_hostname: str = Field(default="")
+    # 公网 profile 设为 true。缺 CA、错误主机名或关闭校验都会阻止进程启动。
+    db_tls_required: bool = Field(default=False)
+    redis_pool_size: int = Field(default=800, alias="REDIS_POOL_SIZE", ge=1)
     redis_socket_timeout: float = Field(
         default=5.0, alias="REDIS_SOCKET_TIMEOUT", gt=0
     )
@@ -131,26 +141,43 @@ class BaseConfig(BaseSettings):
     # 滑块滑动方式由系统设置 captcha.slider_mode 管理，并在每次滑块任务前刷新。
     # 真实鼠标方式仅适用于有图形桌面的 Windows 环境。
 
+    # 首次创建管理员时使用。留空则生成随机口令并写入文件，不把口令写入代码或日志。
+    admin_initial_password: str = Field(default="", repr=False)
+    admin_initial_password_file: str = Field(default="")
+
+    @model_validator(mode="after")
+    def _enforce_database_tls(self) -> "BaseConfig":
+        from common.db.tls import enforce_tls_policy
+
+        enforce_tls_policy(self)
+        return self
+
+    def _database_host(self) -> str:
+        return f"[{self.mysql_host}]" if ":" in self.mysql_host else self.mysql_host
+
+    def _redis_host(self) -> str:
+        return f"[{self.redis_host}]" if ":" in self.redis_host else self.redis_host
+
     @property
     def database_url(self) -> str:
-        """同步数据库连接URL"""
-        password = quote_plus(self.mysql_password)
-        host = f"[{self.mysql_host}]" if ":" in self.mysql_host else self.mysql_host
-        return f"{self.sync_driver}://{self.mysql_user}:{password}@{host}:{self.mysql_port}/{self.mysql_database}"
+        """同步数据库 URL。口令由连接参数传递，不放进 URL。"""
+        host = self._database_host()
+        user = quote_plus(self.mysql_user)
+        return f"{self.sync_driver}://{user}@{host}:{self.mysql_port}/{self.mysql_database}"
 
     @property
     def async_database_url(self) -> str:
-        """异步数据库连接URL"""
-        password = quote_plus(self.mysql_password)
-        host = f"[{self.mysql_host}]" if ":" in self.mysql_host else self.mysql_host
-        return f"{self.async_driver}://{self.mysql_user}:{password}@{host}:{self.mysql_port}/{self.mysql_database}"
+        """异步数据库 URL。口令由连接参数传递，不放进 URL。"""
+        host = self._database_host()
+        user = quote_plus(self.mysql_user)
+        return f"{self.async_driver}://{user}@{host}:{self.mysql_port}/{self.mysql_database}"
 
     @property
     def redis_url(self) -> str:
-        """Redis连接URL"""
-        password = quote_plus(self.redis_password)
-        host = f"[{self.redis_host}]" if ":" in self.redis_host else self.redis_host
-        return f"redis://:{password}@{host}:{self.redis_port}/{self.redis_db}"
+        """Redis URL。只用于诊断，不包含口令。"""
+        scheme = "rediss" if self.redis_ssl or self.db_tls_required else "redis"
+        host = self._redis_host()
+        return f"{scheme}://{host}:{self.redis_port}/{self.redis_db}"
 
 
 @lru_cache

@@ -234,16 +234,29 @@ async def refresh_token(
 async def check_default_password(
     current_user: User = Depends(deps.get_current_admin_user),
     auth_service: AuthService = Depends(deps.get_auth_service),
+    session: AsyncSession = Depends(deps.get_db_session),
 ) -> ApiResponse:
     """
-    检查管理员密码是否为默认值（admin123）
-    仅管理员可调用，返回 data.is_default 表示是否为默认密码
+    检查管理员是否仍需更换初始口令。
+
+    历史数据里的固定弱口令，以及本次初始化标记，都会要求先修改密码。
     """
-    is_default = auth_service._verify_user_password(current_user, "admin123")
+    from sqlalchemy import select
+
+    from common.models.system_setting import SystemSetting
+
+    legacy_password = "admin123"
+    is_legacy = auth_service._verify_user_password(current_user, legacy_password)
+    flag = await session.scalar(
+        select(SystemSetting.value).where(
+            SystemSetting.key == "security.admin_password_change_required"
+        )
+    )
+    must_change = str(flag or "").strip().lower() == "true"
     return ApiResponse(
         success=True,
         message="检查完成",
-        data={"is_default": is_default},
+        data={"is_default": is_legacy or must_change},
     )
 
 

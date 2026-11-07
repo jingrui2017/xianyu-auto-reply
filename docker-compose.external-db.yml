@@ -1,0 +1,243 @@
+# 外部 MySQL / Redis 的四个应用。
+# 不创建 mysql、redis 容器，也不依赖本机数据库容器。
+# 数据库必须已开启 TLS，客户端只信任挂载进来的 CA，并校验证书里的 IP 或主机名。
+#
+# 用法（在仓库根目录，先复制并填写 .env.external-db，不要把口令提交进仓库）:
+#   docker compose --env-file .env.external-db -f docker-compose.external-db.yml up -d --build
+#
+# 目标机器是 Apple M4 上的 linux/arm64。镜像显式指定 arm64，不使用 amd64 模拟。
+# 浏览器使用项目 Dockerfile 里的 Playwright / Patchright Chromium，不在宿主安装 Chrome。
+
+name: xianyu-external-db
+
+x-ca-volume: &ca-volume
+  type: bind
+  source: ${XIANYU_CA_FILE:?set XIANYU_CA_FILE to the CA certificate file}
+  target: /etc/xianyu/ca/ca.crt
+  read_only: true
+
+x-db-env: &db-env
+  ENVIRONMENT: production
+  DB_TLS_REQUIRED: "true"
+  MYSQL_SSL_MODE: VERIFY_IDENTITY
+  MYSQL_SSL_CA: /etc/xianyu/ca/ca.crt
+  MYSQL_SSL_SERVER_HOSTNAME: ${MYSQL_SSL_SERVER_HOSTNAME:-}
+  MYSQL_HOST: ${MYSQL_HOST:?set MYSQL_HOST to the public IP or certificate name}
+  MYSQL_PORT: ${MYSQL_PORT:-3306}
+  MYSQL_USER: ${MYSQL_USER:?set MYSQL_USER}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+  MYSQL_DATABASE: ${MYSQL_DATABASE:-xianyu_data}
+  DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-10}
+  DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
+  DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
+  DB_POOL_PRE_PING: "true"
+  DB_POOL_USE_LIFO: "true"
+  REDIS_SSL: "true"
+  REDIS_SSL_CA: /etc/xianyu/ca/ca.crt
+  REDIS_SSL_SERVER_HOSTNAME: ${REDIS_SSL_SERVER_HOSTNAME:-}
+  REDIS_HOST: ${REDIS_HOST:?set REDIS_HOST to the public IP or certificate name}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+  REDIS_DB: ${REDIS_DB:-0}
+  REDIS_POOL_SIZE: ${REDIS_POOL_SIZE:-50}
+  REDIS_SOCKET_TIMEOUT: ${REDIS_SOCKET_TIMEOUT:-5}
+  REDIS_SOCKET_CONNECT_TIMEOUT: ${REDIS_SOCKET_CONNECT_TIMEOUT:-3}
+  REDIS_SOCKET_KEEPALIVE: "true"
+  REDIS_SOCKET_KEEPALIVE_IDLE: ${REDIS_SOCKET_KEEPALIVE_IDLE:-60}
+  REDIS_SOCKET_KEEPALIVE_INTERVAL: ${REDIS_SOCKET_KEEPALIVE_INTERVAL:-10}
+  REDIS_SOCKET_KEEPALIVE_COUNT: ${REDIS_SOCKET_KEEPALIVE_COUNT:-3}
+  REDIS_HEALTH_CHECK_INTERVAL: ${REDIS_HEALTH_CHECK_INTERVAL:-30}
+  REDIS_PROTOCOL: ${REDIS_PROTOCOL:-2}
+  REDIS_STARTUP_MAX_RETRIES: ${REDIS_STARTUP_MAX_RETRIES:-5}
+  REDIS_STARTUP_RETRY_BASE_DELAY: ${REDIS_STARTUP_RETRY_BASE_DELAY:-1}
+  REDIS_STARTUP_RETRY_CAP_DELAY: ${REDIS_STARTUP_RETRY_CAP_DELAY:-10}
+  SQL_ECHO: "false"
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  TZ: Asia/Shanghai
+  INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+
+x-frontend-profile: &frontend-profile
+  TZ: Asia/Shanghai
+  DB_TLS_REQUIRED: "true"
+  MYSQL_SSL_MODE: VERIFY_IDENTITY
+  MYSQL_SSL_CA: /etc/xianyu/ca/ca.crt
+  MYSQL_SSL_SERVER_HOSTNAME: ${MYSQL_SSL_SERVER_HOSTNAME:-}
+  MYSQL_HOST: ${MYSQL_HOST:?set MYSQL_HOST to the public IP or certificate name}
+  MYSQL_PORT: ${MYSQL_PORT:-3306}
+  MYSQL_DATABASE: ${MYSQL_DATABASE:-xianyu_data}
+  REDIS_SSL: "true"
+  REDIS_SSL_CA: /etc/xianyu/ca/ca.crt
+  REDIS_SSL_SERVER_HOSTNAME: ${REDIS_SSL_SERVER_HOSTNAME:-}
+  REDIS_HOST: ${REDIS_HOST:?set REDIS_HOST to the public IP or certificate name}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_DB: ${REDIS_DB:-0}
+
+services:
+  backend-web:
+    platform: linux/arm64
+    user: "10001:10001"
+    build:
+      context: .
+      dockerfile: backend-web/Dockerfile
+    container_name: xianyu-backend-web
+    restart: unless-stopped
+    environment:
+      <<: *db-env
+      DB_POOL_SIZE: ${BACKEND_DB_POOL_SIZE:-20}
+      DB_MAX_OVERFLOW: ${BACKEND_DB_MAX_OVERFLOW:-10}
+      BACKEND_WEB_PORT: "8089"
+      HOST: 0.0.0.0
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      REFRESH_TOKEN_EXPIRE_MINUTES: ${REFRESH_TOKEN_EXPIRE_MINUTES:-10080}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://127.0.0.1:9000}
+      WEBSOCKET_SERVICE_URL: http://websocket:8090
+      SCHEDULER_SERVICE_URL: http://scheduler:8091
+      FRONTEND_SERVICE_URL: http://frontend:80
+      STATIC_DIR: /app/static
+      BACKUP_DIR: /app/backups
+      BACKEND_WEB_PUBLIC_URL: ${BACKEND_WEB_PUBLIC_URL:-http://127.0.0.1:9000}
+      FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:-http://127.0.0.1:9000}
+      AUTO_START_CRAWL_JOBS: "false"
+      ENABLE_REMOTE_ADS: "false"
+      ENABLE_REMOTE_ANNOUNCEMENTS: "false"
+      ENABLE_REMOTE_POPUP_ANNOUNCEMENTS: "false"
+      BROWSER_HEADLESS: "true"
+      TOKEN_CACHE_TTL_MIN_HOURS: ${TOKEN_CACHE_TTL_MIN_HOURS:-5}
+      TOKEN_CACHE_TTL_MAX_HOURS: ${TOKEN_CACHE_TTL_MAX_HOURS:-10}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
+      ADMIN_INITIAL_PASSWORD_FILE: /app/backups/admin-initial-password.txt
+    volumes:
+      - *ca-volume
+      - backend_web_logs:/app/backend-web/logs
+      - static-files:/app/static
+      - backup-files:/app/backups
+    ports:
+      - "127.0.0.1:${BACKEND_WEB_PORT:-8089}:8089"
+    networks:
+      - xianyu-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8089/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  websocket:
+    platform: linux/arm64
+    user: "10001:10001"
+    build:
+      context: .
+      dockerfile: websocket/Dockerfile
+    container_name: xianyu-websocket
+    restart: unless-stopped
+    environment:
+      <<: *db-env
+      DB_POOL_SIZE: ${WEBSOCKET_DB_POOL_SIZE:-30}
+      DB_MAX_OVERFLOW: ${WEBSOCKET_DB_MAX_OVERFLOW:-10}
+      WEBSOCKET_PORT: "8090"
+      HOST: 0.0.0.0
+      MAX_CAPTCHA_CONCURRENT: ${MAX_CAPTCHA_CONCURRENT:-3}
+      BROWSER_HEADLESS: "true"
+      AUTO_START_WEBSOCKET: "false"
+      CAPTCHA_DRISSIONPAGE_FALLBACK_ENABLED: "false"
+      BACKEND_WEB_SERVICE_URL: http://backend-web:8089
+      STATIC_DIR: /app/static
+      TOKEN_CACHE_TTL_MIN_HOURS: ${TOKEN_CACHE_TTL_MIN_HOURS:-5}
+      TOKEN_CACHE_TTL_MAX_HOURS: ${TOKEN_CACHE_TTL_MAX_HOURS:-10}
+    volumes:
+      - *ca-volume
+      - websocket_logs:/app/websocket/logs
+      - static-files:/app/static
+      - browser_data:/app/browser_data
+    ports:
+      - "127.0.0.1:${WEBSOCKET_PORT:-8090}:8090"
+    networks:
+      - xianyu-network
+    depends_on:
+      backend-web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  scheduler:
+    platform: linux/arm64
+    user: "10001:10001"
+    build:
+      context: .
+      dockerfile: scheduler/Dockerfile
+    container_name: xianyu-scheduler
+    restart: unless-stopped
+    environment:
+      <<: *db-env
+      DB_POOL_SIZE: ${SCHEDULER_DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${SCHEDULER_DB_MAX_OVERFLOW:-5}
+      SCHEDULER_PORT: "8091"
+      HOST: 0.0.0.0
+      REDELIVERY_INTERVAL: ${REDELIVERY_INTERVAL:-5}
+      RATE_INTERVAL: ${RATE_INTERVAL:-20}
+      WEBSOCKET_SERVICE_URL: http://websocket:8090
+      BACKEND_WEB_SERVICE_URL: http://backend-web:8089
+      STATIC_DIR: /app/static
+      BACKUP_DIR: /app/backups
+    volumes:
+      - *ca-volume
+      - scheduler_logs:/app/scheduler/logs
+      - static-files:/app/static
+      - backup-files:/app/backups
+    ports:
+      - "127.0.0.1:${SCHEDULER_PORT:-8091}:8091"
+    networks:
+      - xianyu-network
+    depends_on:
+      backend-web:
+        condition: service_healthy
+      websocket:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8091/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  frontend:
+    platform: linux/arm64
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    container_name: xianyu-frontend
+    restart: unless-stopped
+    environment:
+      <<: *frontend-profile
+    volumes:
+      - *ca-volume
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-9000}:80"
+    networks:
+      - xianyu-network
+    depends_on:
+      backend-web:
+        condition: service_healthy
+
+networks:
+  xianyu-network:
+    driver: bridge
+
+volumes:
+  websocket_logs:
+    driver: local
+  backend_web_logs:
+    driver: local
+  scheduler_logs:
+    driver: local
+  static-files:
+    driver: local
+  backup-files:
+    driver: local
+  browser_data:
+    driver: local

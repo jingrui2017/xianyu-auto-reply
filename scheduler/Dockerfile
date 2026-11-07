@@ -13,7 +13,7 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y curl ca-certificates gcc \
+RUN apt-get update && apt-get install -y curl ca-certificates gcc passwd \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,8 +32,11 @@ open('/tmp/requirements.txt','w').write('\n'.join(deps))" && \
 # 安装Playwright浏览器
 RUN python -m playwright install --with-deps chromium
 
-# 创建日志目录
-RUN mkdir -p /app/scheduler/logs
+# Playwright Chromium 留在镜像内，调度进程以非 root 用户运行。
+RUN groupadd --system --gid 10001 xianyu \
+    && useradd --system --uid 10001 --gid xianyu --create-home --home-dir /home/xianyu --shell /usr/sbin/nologin xianyu \
+    && mkdir -p /app/scheduler/logs /app/backups /etc/xianyu/ca \
+    && chown -R xianyu:xianyu /app /ms-playwright /home/xianyu /etc/xianyu
 
 # 暴露端口
 EXPOSE 8091
@@ -41,6 +44,9 @@ EXPOSE 8091
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV TZ=Asia/Shanghai
+ENV HOME=/home/xianyu
+
+USER xianyu
 
 # 启动服务
 CMD ["python", "scheduler/main.py"]

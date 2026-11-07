@@ -9,18 +9,16 @@ Redis客户端
 from __future__ import annotations
 
 import asyncio
-import socket
 import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
 import redis.asyncio as redis
-from redis.asyncio.retry import Retry
-from redis.backoff import ExponentialWithJitterBackoff
 from loguru import logger
 
 from common.core.config import get_settings
 from common.db.redis_pool import HealthyRedisConnectionPool
+from common.db.tls import build_redis_pool, redact_secrets, safe_endpoint
 
 settings = get_settings()
 
@@ -37,38 +35,7 @@ def _create_redis_pool() -> HealthyRedisConnectionPool:
     Returns:
         使用统一重试策略和超时配置构建的连接池
     """
-    retry = Retry(
-        ExponentialWithJitterBackoff(base=1, cap=10),
-        retries=3,
-    )
-    socket_keepalive_options = None
-    if settings.redis_socket_keepalive:
-        socket_keepalive_options = {}
-        if hasattr(socket, "TCP_KEEPIDLE"):
-            socket_keepalive_options[socket.TCP_KEEPIDLE] = (
-                settings.redis_socket_keepalive_idle
-            )
-        if hasattr(socket, "TCP_KEEPINTVL"):
-            socket_keepalive_options[socket.TCP_KEEPINTVL] = (
-                settings.redis_socket_keepalive_interval
-            )
-        if hasattr(socket, "TCP_KEEPCNT"):
-            socket_keepalive_options[socket.TCP_KEEPCNT] = (
-                settings.redis_socket_keepalive_count
-            )
-
-    return HealthyRedisConnectionPool.from_url(
-        settings.redis_url,
-        max_connections=settings.redis_pool_size,
-        decode_responses=True,
-        socket_timeout=settings.redis_socket_timeout,
-        socket_connect_timeout=settings.redis_socket_connect_timeout,
-        socket_keepalive=settings.redis_socket_keepalive,
-        socket_keepalive_options=socket_keepalive_options,
-        health_check_interval=settings.redis_health_check_interval,
-        retry=retry,
-        protocol=settings.redis_protocol,
-    )
+    return build_redis_pool(settings)
 
 
 async def _close_redis_resources(
@@ -87,7 +54,9 @@ async def _close_redis_resources(
             await client.aclose(close_connection_pool=False)
         except Exception as exc:
             logger.warning(
-                f"释放Redis客户端失败: error_type={type(exc).__name__}, error={exc}"
+                "释放Redis客户端失败: "
+                f"error_type={type(exc).__name__}, "
+                f"error={redact_secrets(str(exc), settings.redis_password)}"
             )
 
     if pool is not None:
@@ -95,7 +64,9 @@ async def _close_redis_resources(
             await pool.aclose()
         except Exception as exc:
             logger.warning(
-                f"断开Redis连接池失败: error_type={type(exc).__name__}, error={exc}"
+                "断开Redis连接池失败: "
+                f"error_type={type(exc).__name__}, "
+                f"error={redact_secrets(str(exc), settings.redis_password)}"
             )
 
 
@@ -125,18 +96,18 @@ async def initialize_redis_client() -> redis.Redis:
 
                 redis_pool = pool
                 redis_client = client
-                logger.info(
-                    "Redis连接成功: "
-                    f"{settings.redis_host}:{settings.redis_port}/{settings.redis_db}"
-                )
+                logger.info(f"Redis连接成功: {safe_endpoint(settings, 'redis')}")
                 return client
             except Exception as exc:
                 await _close_redis_resources(client, pool)
+                safe_error = redact_secrets(
+                    str(exc), settings.redis_password, settings.mysql_password
+                )
                 if attempt >= max_retries:
-                    logger.exception(
+                    logger.error(
                         "Redis初始化失败，已达到最大重试次数: "
                         f"attempt={attempt + 1}/{max_retries + 1}, "
-                        f"error_type={type(exc).__name__}, error={exc}"
+                        f"error_type={type(exc).__name__}, error={safe_error}"
                     )
                     raise
 
@@ -148,7 +119,7 @@ async def initialize_redis_client() -> redis.Redis:
                     "Redis初始化失败，准备重试: "
                     f"attempt={attempt + 1}/{max_retries + 1}, "
                     f"retry_after={delay:.2f}s, "
-                    f"error_type={type(exc).__name__}, error={exc}"
+                    f"error_type={type(exc).__name__}, error={safe_error}"
                 )
                 await asyncio.sleep(delay)
 

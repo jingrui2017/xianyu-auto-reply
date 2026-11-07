@@ -28,6 +28,20 @@ from typing import Optional
 
 
 # 本地启动器生成 .env 时统一写入的 Redis 连接池参数。
+def _tls_env(config: dict) -> str:
+    """把可选 TLS 配置写进服务 .env。未提供时保持明文，避免改变现有启动器行为。"""
+    values = {
+        "DB_TLS_REQUIRED": config.get("db_tls_required", "false"),
+        "MYSQL_SSL_MODE": config.get("mysql_ssl_mode", "disable"),
+        "MYSQL_SSL_CA": config.get("mysql_ssl_ca", ""),
+        "MYSQL_SSL_SERVER_HOSTNAME": config.get("mysql_ssl_server_hostname", ""),
+        "REDIS_SSL": config.get("redis_ssl", "false"),
+        "REDIS_SSL_CA": config.get("redis_ssl_ca", ""),
+        "REDIS_SSL_SERVER_HOSTNAME": config.get("redis_ssl_server_hostname", ""),
+    }
+    return "".join(f"{key}={value}\n" for key, value in values.items())
+
+
 _REDIS_POOL_ENV = (
     "REDIS_POOL_SIZE=800\n"
     "REDIS_SOCKET_TIMEOUT=5\n"
@@ -135,6 +149,7 @@ class ServiceManager:
             f"REDIS_PORT={config['redis_port']}\n"
             f"REDIS_PASSWORD={config['redis_password']}\n"
             f"REDIS_DB={config['redis_db']}\n"
+            f"{_tls_env(config)}"
             f"{_REDIS_POOL_ENV}"
             f"BACKEND_WEB_PORT=8089\n"
             f"JWT_ALGORITHM=HS256\n"
@@ -165,6 +180,7 @@ class ServiceManager:
             f"REDIS_PORT={config['redis_port']}\n"
             f"REDIS_PASSWORD={config['redis_password']}\n"
             f"REDIS_DB={config['redis_db']}\n"
+            f"{_tls_env(config)}"
             f"{_REDIS_POOL_ENV}"
             f"WEBSOCKET_PORT=8090\n"
             f"MAX_CAPTCHA_CONCURRENT=1\n"
@@ -191,6 +207,7 @@ class ServiceManager:
             f"REDIS_PORT={config['redis_port']}\n"
             f"REDIS_PASSWORD={config['redis_password']}\n"
             f"REDIS_DB={config['redis_db']}\n"
+            f"{_tls_env(config)}"
             f"{_REDIS_POOL_ENV}"
             f"SCHEDULER_PORT=8091\n"
             f"REDELIVERY_INTERVAL=5\n"

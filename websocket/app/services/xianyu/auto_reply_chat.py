@@ -6,6 +6,10 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
+from app.services.xianyu.ai_order_guard import (
+    fail_closed_reply,
+    guard_outgoing_ai_reply,
+)
 from app.services.xianyu.api_keyword_handler import ApiKeywordHandler
 from app.services.xianyu.rate_service import check_item_belongs_to_account
 from app.services.xianyu.resource_manager import pause_manager
@@ -14,6 +18,41 @@ from common.db.session import async_session_maker
 
 class AutoReplyChatMixin:
     """封装自动回复chat相关处理。"""
+
+    async def _guard_ai_reply_before_send(
+        self,
+        reply: str,
+        log_payload: Dict[str, Any],
+        buyer_id: str,
+        item_id: str,
+        user_message: str,
+        session_factory=None,
+    ) -> str:
+        """延迟结束后、真正发送前，按当前买家和当前商品重读本地订单。"""
+        if log_payload.get("reply_strategy") != "ai":
+            return reply
+        factory = session_factory or async_session_maker
+        try:
+            async with factory() as session:
+                guarded = await guard_outgoing_ai_reply(
+                    session,
+                    account_id=self.cookie_id,
+                    buyer_id=buyer_id,
+                    item_id=item_id or "",
+                    user_message=user_message,
+                    reply_text=reply,
+                )
+        except Exception as exc:
+            logger.error(f"【{self.cookie_id}】发送前复核订单事实失败: {type(exc).__name__}")
+            fallback = fail_closed_reply(user_message, reply)
+            guarded = reply if fallback is None else fallback
+        if guarded != reply:
+            logger.info(f"【{self.cookie_id}】发送前已替换AI回复，避免无依据的收款或发货表述")
+            log_payload["reply_text"] = guarded
+            if hasattr(self, "_build_text_reply_segments"):
+                log_payload["reply_segments"] = self._build_text_reply_segments(guarded)
+            log_payload.setdefault("context_snapshot", {})["ai_order_guard"] = "replaced"
+        return guarded
 
     async def handle_chat_message(self, parsed_message: Dict[str, Any], websocket) -> None:
         """处理聊天消息(主入口)
@@ -182,6 +221,15 @@ class AutoReplyChatMixin:
                             await self._unmark_chat_processed(chat_id, send_message)
                         log_payload["decision_reason"] = "chat_paused_after_delay"
                         return
+
+                    if isinstance(reply, str):
+                        reply = await self._guard_ai_reply_before_send(
+                            reply=reply,
+                            log_payload=log_payload,
+                            buyer_id=send_user_id,
+                            item_id=item_id,
+                            user_message=send_message,
+                        )
                     
                     # 检查是否是图片发送指令
                     # 格式：__IMAGE_SEND__|类型标识|image_url
