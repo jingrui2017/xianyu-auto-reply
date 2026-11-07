@@ -26,6 +26,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from common.db.session import async_session_maker
 from common.models.xy_account import XYAccount
 from common.models.ai_chat_message import AIChatMessage
+from app.services.xianyu.ai_order_guard import (
+    fact_prompt_block,
+    guard_ai_text,
+    is_fulfillment_sensitive,
+    load_order_fact,
+)
 from app.services.xianyu.resource_manager import pause_manager
 from common.services.ai_provider_service import (
     DEFAULT_AI_BASE_URL,
@@ -802,6 +808,26 @@ class AIReplyEngine:
                         f"【{cookie_id}】AI 回复前检测到人工回复暂停：buyer_id={user_id}, item_id={item_id}"
                     )
                     return None
+
+                order_fact = await load_order_fact(
+                    db_session,
+                    account_id=cookie_id,
+                    buyer_id=user_id,
+                    item_id=item_id,
+                )
+                if is_fulfillment_sensitive(message):
+                    reply = guard_ai_text(None, order_fact, message).text
+                    logger.info(
+                        f"【{cookie_id}】付款或发货问题改用本地订单模板 "
+                        f"kind={order_fact.kind} source={order_fact.source} "
+                        f"order_no={order_fact.order_no or ''} "
+                        f"matched={order_fact.matched_count} "
+                        f"ignored_older={order_fact.ignored_older_count}"
+                    )
+                    await self._save_ai_message_with_retry(
+                        cookie_id, chat_id, user_id, item_id, reply, intent
+                    )
+                    return reply
                 
                 # 获取对话历史
                 context_stmt = (
@@ -905,6 +931,8 @@ class AIReplyEngine:
 
 用户消息：{message}
 
+{fact_prompt_block(order_fact)}
+
 请根据以上信息生成回复："""
                 
                 messages = [
@@ -951,6 +979,20 @@ class AIReplyEngine:
                     ):
                         logger.info(f"【{cookie_id}】AI回复生成成功，但检测到会话 {chat_id} 已被人工介入暂停，跳过保存和发送")
                         return None
+
+                    fresh_fact = await load_order_fact(
+                        db_session,
+                        account_id=cookie_id,
+                        buyer_id=user_id,
+                        item_id=item_id,
+                    )
+                    decision = guard_ai_text(reply, fresh_fact, message)
+                    if decision.replaced:
+                        logger.info(
+                            f"【{cookie_id}】生成后拦截无依据收款或发货表述 "
+                            f"reason={decision.reason} kind={fresh_fact.kind} source={fresh_fact.source}"
+                        )
+                        reply = decision.text
 
                     # 保存AI回复（带重试机制，防止连接丢失）
                     await self._save_ai_message_with_retry(
