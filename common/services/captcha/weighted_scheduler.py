@@ -21,7 +21,7 @@ from collections import deque
 from typing import Dict, Optional
 
 from loguru import logger
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 # 权重配置在 system_settings 中的键（与 backend-web captcha 路由保持一致）
 WEIGHT_KEY_LOCAL = "captcha.real_mouse_weight_local"
@@ -316,38 +316,35 @@ class WeightedSerialScheduler:
         with self._engine_lock:
             if self._engine is not None:
                 return self._engine
-            db_url, connect_timeout = self._resolve_db_config()
-            if not db_url:
+            settings = self._resolve_db_settings()
+            if settings is None:
                 logger.warning("real_mouse 权重调度器无法获取数据库配置")
                 return None
 
-            engine_kwargs = {
-                "echo": False,
-                "pool_pre_ping": True,
-            }
-            if db_url.startswith("mysql+pymysql"):
-                engine_kwargs["connect_args"] = {
-                    "connect_timeout": connect_timeout,
-                    "read_timeout": connect_timeout,
-                    "write_timeout": connect_timeout,
-                }
-            self._engine = create_engine(db_url, **engine_kwargs)
+            from common.db.tls import create_sync_mysql_engine
+
+            timeout = max(int(getattr(settings, "db_connect_timeout", 10)), 1)
+            self._engine = create_sync_mysql_engine(
+                settings,
+                echo=False,
+                pool_pre_ping=True,
+                read_timeout=timeout,
+                write_timeout=timeout,
+            )
             return self._engine
 
     @staticmethod
-    def _resolve_db_config() -> tuple[Optional[str], int]:
-        """获取数据库 URL 与连接超时（兼容 common/core 和各服务配置）。"""
+    def _resolve_db_settings():
+        """获取数据库配置（兼容 common/core 和各服务配置）。"""
         for module_path in ("common.core.config", "app.core.config"):
             try:
                 module = __import__(module_path, fromlist=["get_settings"])
                 settings = module.get_settings()
-                db_url = getattr(settings, "database_url", None)
-                if db_url:
-                    timeout = max(int(getattr(settings, "db_connect_timeout", 10)), 1)
-                    return db_url, timeout
+                if getattr(settings, "database_url", None):
+                    return settings
             except Exception:
                 continue
-        return None, 10
+        return None
 
 
 # 全局单例：real_mouse 引擎专用（本地/远程两来源共用这一把加权锁）

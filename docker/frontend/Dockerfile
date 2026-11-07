@@ -33,6 +33,9 @@ RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
 # 复制nginx配置
 COPY docker/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
+# CA 只读挂载的父目录。前端不连接数据库，挂载只为与另外三个应用使用同一份证书路径。
+RUN mkdir -p /etc/xianyu/ca
+
 # 复制构建产物（已混淆压缩，不含源码）
 COPY --from=builder /app/dist /usr/share/nginx/html
 

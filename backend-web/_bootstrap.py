@@ -64,7 +64,11 @@ async def check_database_connection():
         logger.info("数据库连接成功")
         return True
     except Exception as e:
-        logger.error(f"数据库连接失败: {str(e)}")
+        from common.db.tls import redact_secrets
+        logger.error(
+            "数据库连接失败: "
+            + redact_secrets(str(e), settings.mysql_password, settings.redis_password)
+        )
         logger.error("请检查数据库配置和网络连接")
         logger.error(f"数据库地址: {settings.mysql_host}:{settings.mysql_port}/{settings.mysql_database}")
         return False
@@ -85,19 +89,30 @@ async def lifespan(app: FastAPI):
     # 初始化 Redis 健康连接池；失败时按指数退避重试，最终失败则停止启动。
     try:
         await initialize_redis_client()
-    except Exception:
-        logger.exception("Redis连接初始化失败，服务退出")
+    except Exception as exc:
+        from common.db.tls import redact_secrets
+        logger.error(
+            "Redis连接初始化失败，服务退出: "
+            + redact_secrets(str(exc), settings.mysql_password, settings.redis_password)
+        )
         raise
     
     # 初始化数据库（创建表、默认数据等）
     try:
         await init_database()
-    except Exception:
-        logger.exception("数据库初始化失败，服务退出")
+    except Exception as exc:
+        from common.db.tls import redact_secrets
+        logger.error(
+            "数据库初始化失败，服务退出: "
+            + redact_secrets(str(exc), settings.mysql_password, settings.redis_password)
+        )
         try:
             await close_redis_client()
-        except Exception:
-            logger.exception("数据库初始化失败后关闭Redis连接失败")
+        except Exception as close_exc:
+            logger.error(
+                "数据库初始化失败后关闭Redis连接失败: "
+                + redact_secrets(str(close_exc), settings.mysql_password, settings.redis_password)
+            )
         raise
 
     # 删除备份日志时会暂存文件，启动时检查进程退出前是否留下未完成的暂存文件。

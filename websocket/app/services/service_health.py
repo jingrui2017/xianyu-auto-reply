@@ -18,6 +18,13 @@ async def check_database_connection() -> bool:
             async with async_engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
         return True
-    except Exception:
-        logger.exception("WebSocket服务数据库连接检查失败")
+    except Exception as exc:
+        from common.core.config import get_settings
+        from common.db.tls import redact_secrets
+
+        settings = get_settings()
+        logger.error(
+            "WebSocket服务数据库连接检查失败: "
+            + redact_secrets(str(exc), settings.mysql_password, settings.redis_password)
+        )
         return False

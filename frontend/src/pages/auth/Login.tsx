@@ -278,7 +278,7 @@ export function Login() {
   const fillDefaultCredentials = () => {
     setLoginType('username')
     setUsername('admin')
-    setPassword('admin123')
+    setPassword('')
   }
 
   return (
@@ -576,10 +576,10 @@ export function Login() {
                              transition-colors text-sm"
                 >
                   <div className="text-left">
-                    <p className="text-slate-500 dark:text-slate-400">演示账号</p>
-                    <p className="text-slate-900 dark:text-white font-medium">admin / admin123</p>
+                    <p className="text-slate-500 dark:text-slate-400">初始管理员</p>
+                    <p className="text-slate-900 dark:text-white font-medium">用户名 admin，口令只在本机初始化文件中</p>
                   </div>
-                  <span className="text-blue-600 dark:text-blue-400">一键填充 →</span>
+                  <span className="text-blue-600 dark:text-blue-400">填入用户名 →</span>
                 </button>
               </div>
             )}

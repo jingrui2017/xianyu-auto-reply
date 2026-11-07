@@ -179,30 +179,29 @@ def is_account_disabled_in_db(account_id: str) -> bool:
         False: 账号未禁用或查询失败
     """
     try:
-        from sqlalchemy import create_engine, text
+        from sqlalchemy import text
+        from common.db.tls import create_sync_mysql_engine
         
         # 尝试从不同服务获取配置
-        db_url = None
+        settings = None
         try:
             from common.core.config import get_settings
             settings = get_settings()
-            db_url = settings.database_url
         except ImportError:
             pass
         
-        if not db_url:
+        if settings is None:
             try:
                 from app.core.config import get_settings
                 settings = get_settings()
-                db_url = settings.database_url
             except ImportError:
                 pass
         
-        if not db_url:
-            logger.warning(f"无法获取数据库配置")
+        if settings is None or not getattr(settings, "database_url", None):
+            logger.warning("无法获取数据库配置")
             return False
         
-        engine = create_engine(db_url, echo=False)
+        engine = create_sync_mysql_engine(settings, echo=False)
         
         try:
             with engine.connect() as conn:

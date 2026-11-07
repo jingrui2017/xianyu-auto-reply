@@ -59,7 +59,11 @@ async def check_database_connection():
         logger.info("数据库连接成功")
         return True
     except Exception as e:
-        logger.error(f"数据库连接失败: {str(e)}")
+        from common.db.tls import redact_secrets
+        logger.error(
+            "数据库连接失败: "
+            + redact_secrets(str(e), settings.mysql_password, settings.redis_password)
+        )
         logger.error("请检查数据库配置和网络连接")
         logger.error(f"数据库地址: {settings.mysql_host}:{settings.mysql_port}/{settings.mysql_database}")
         return False

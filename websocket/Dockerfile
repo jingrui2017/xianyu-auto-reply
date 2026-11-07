@@ -13,7 +13,7 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y curl ca-certificates gcc \
+RUN apt-get update && apt-get install -y curl ca-certificates gcc passwd \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -33,8 +33,11 @@ open('/tmp/requirements.txt','w').write('\n'.join(deps))" && \
 RUN python -m playwright install --with-deps chromium
 RUN python -m patchright install --with-deps chromium
 
-# 创建日志目录
-RUN mkdir -p /app/websocket/logs /app/static /app/browser_data
+# 浏览器和账号状态目录都在镜像内准备，运行时不使用宿主 Chrome。
+RUN groupadd --system --gid 10001 xianyu \
+    && useradd --system --uid 10001 --gid xianyu --create-home --home-dir /home/xianyu --shell /usr/sbin/nologin xianyu \
+    && mkdir -p /app/websocket/logs /app/static /app/browser_data /etc/xianyu/ca \
+    && chown -R xianyu:xianyu /app /ms-playwright /home/xianyu /etc/xianyu
 
 # 暴露端口
 EXPOSE 8090
@@ -42,6 +45,9 @@ EXPOSE 8090
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV TZ=Asia/Shanghai
+ENV HOME=/home/xianyu
+
+USER xianyu
 
 # 启动服务
 CMD ["python", "websocket/main.py"]

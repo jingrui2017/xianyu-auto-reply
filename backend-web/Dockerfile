@@ -13,7 +13,7 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y curl ca-certificates gcc \
+RUN apt-get update && apt-get install -y curl ca-certificates gcc passwd \
     fonts-dejavu-core fonts-liberation \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -33,8 +33,11 @@ open('/tmp/requirements.txt','w').write('\n'.join(deps))" && \
 RUN python -m playwright install --with-deps chromium
 RUN python -m patchright install --with-deps chromium
 
-# 创建日志目录
-RUN mkdir -p /app/backend-web/logs /app/static/uploads
+# 浏览器装在镜像内。运行用户不需要宿主 Chrome。
+RUN groupadd --system --gid 10001 xianyu \
+    && useradd --system --uid 10001 --gid xianyu --create-home --home-dir /home/xianyu --shell /usr/sbin/nologin xianyu \
+    && mkdir -p /app/backend-web/logs /app/static/uploads /app/backups /etc/xianyu/ca \
+    && chown -R xianyu:xianyu /app /ms-playwright /home/xianyu /etc/xianyu
 
 # 暴露端口
 EXPOSE 8089
@@ -42,6 +45,9 @@ EXPOSE 8089
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV TZ=Asia/Shanghai
+ENV HOME=/home/xianyu
+
+USER xianyu
 
 # 启动服务
 CMD ["python", "backend-web/main.py"]

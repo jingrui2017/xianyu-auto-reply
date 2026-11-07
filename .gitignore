@@ -9,7 +9,9 @@
 **/.env.local
 **/.env.*.local
 .env.enc
+.env.external-db
 !**/.env.example
+!.env.external-db.example
 
 # ------------------------------------------
 # Python相关
