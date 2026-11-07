@@ -11,10 +11,9 @@
 四个服务都用仓库里的 Dockerfile：
 
 - Docker Hub 清单里，`python:3.11-slim`、`node:18-alpine`、`nginx:alpine` 都包含 `linux/arm64`。
-- Playwright 的浏览器注册表为 `debian12-arm64` 提供 `chromium-linux-arm64.zip`。`python:3.11-slim` 基于 Debian 12。
-- Patchright 1.64.4 发布了 `manylinux_2_17_aarch64` 包，驱动里把 `debian12-arm64` 映射到 `linux-arm64/chrome-linux-arm64.zip`。
+- 本机构建的 `python:3.11-slim` 实际是 Debian 13，不是 Debian 12。Playwright 与 Patchright 对 `debian13-arm64` 提供 linux arm64 Chromium；这次 ARM64 浏览器构建已经通过，因此不更换基础镜像。
 - backend-web 和 websocket 在镜像内安装 Playwright 与 Patchright 的 Chromium。scheduler 安装 Playwright Chromium。
-- 不在 macOS 宿主安装 Google Chrome，也不把宿主 Chrome 挂进容器。这次没有构建完整镜像，因为当前环境没有 Docker，浏览器层也很大。
+- 不在 macOS 宿主安装 Google Chrome，也不把宿主 Chrome 挂进容器。
 
 因此 compose 固定 `platform: linux/arm64`，不使用 amd64 模拟。如果以后某个浏览器包不再提供 arm64，构建会直接失败；那时应停在该服务，而不是改成模拟运行。
 

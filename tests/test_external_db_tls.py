@@ -599,6 +599,26 @@ def test_compose_external_db_is_fail_closed_and_local_only() -> None:
     assert "browser_data" in text
 
 
+def test_frontend_healthcheck_uses_ipv4_loopback() -> None:
+    import yaml
+
+    dockerfile = (ROOT / "docker/frontend/Dockerfile").read_text(encoding="utf-8")
+    nginx = (ROOT / "docker/frontend/nginx.conf").read_text(encoding="utf-8")
+    healthcheck = [
+        line.strip()
+        for line in dockerfile.splitlines()
+        if line.strip().startswith("CMD wget") or line.strip().startswith("HEALTHCHECK")
+    ]
+    assert any(line.startswith("HEALTHCHECK") and "NONE" not in line for line in healthcheck)
+    command = next(line for line in healthcheck if line.startswith("CMD wget"))
+    assert "http://127.0.0.1:80/" in command
+    assert "localhost" not in command
+    assert "--spider" in command
+    assert "listen 80;" in nginx
+    document = yaml.safe_load((ROOT / "docker-compose.external-db.yml").read_text(encoding="utf-8"))
+    assert "healthcheck" not in document["services"]["frontend"]
+
+
 def test_connection_call_sites_and_admin_password_path() -> None:
     session = (ROOT / "common/db/session.py").read_text(encoding="utf-8")
     compat = (ROOT / "common/db/compat.py").read_text(encoding="utf-8")

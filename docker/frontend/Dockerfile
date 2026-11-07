@@ -45,8 +45,10 @@ EXPOSE 80
 # 设置时区
 ENV TZ=Asia/Shanghai
 
-# 健康检查
+# 健康检查。nginx 的 `listen 80` 只监听 IPv4。
+# Alpine 的 wget 会把 localhost 解析成 [::1]，连到未监听的 IPv6 地址会被拒绝。
+# 显式使用 127.0.0.1，仍然检查站点根路径是否返回成功。
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:80/ || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:80/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]
